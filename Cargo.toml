@@ -1,0 +1,10 @@
+[package]
+name = "keqing_unlock"
+description = "FPS unlocking on anime styled games for 21st century!"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = {version = "4.5", features = ["derive"]}
+winreg = {version = "0.55", features = ["serde"]}
+serde_json = "1.0.142"
