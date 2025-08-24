@@ -11,3 +11,29 @@ serde = {version = "1.0.219", features = ["derive"]}
 serde_json = "1.0.142"
 rusqlite = {version = "0.37.0", features = ["serde_json", "bundled-full"]}
 configparser = "3.1.0"
+
+[dependencies.windows]
+version = "0.37.0"
+features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_System_ProcessStatus",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging"
+]
+
+[profile.release]
+debug-assertions = false
+debug = false
+opt-level = 3
+strip = true
+lto = true
+codegen-units = 16
+incremental = false
+rpath = false
+overflow-checks = false

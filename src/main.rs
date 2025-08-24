@@ -1,7 +1,8 @@
 mod registry_helpers;
+mod hk4e_helpers;
 
 use std::collections::HashMap;
-use std::io::ErrorKind;
+use std::io::{ErrorKind};
 use std::path::Path;
 use clap::{Parser, Subcommand};
 use configparser::ini::Ini;
@@ -26,7 +27,7 @@ enum Commands {
     Run {
         game_id: String,
         target_fps: u32,
-        refresh_delay: u32,
+        refresh_delay: u64,
         game_path: String
     }
 }
@@ -51,8 +52,12 @@ fn main() -> std::io::Result<()> {
         }
         Some(Commands::Run { game_id, target_fps, refresh_delay, game_path }) => {
             match game_id.as_str() {
-                "hk4e_global" => {
-                    println!("hk4e");
+                "hk4e_global" => unsafe {
+                    /*let target = "GenshinImpact.exe";
+                    let r = wait_for_handle_by_name(target);
+                    let pid = get_pid_from_handle(r);
+                    let (base, _size) = get_module_base(pid, target).unwrap();*/
+                    println!("Genshin support Soon");
                 }
                 "hkrpg_global" => {
                     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
