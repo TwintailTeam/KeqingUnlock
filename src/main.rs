@@ -2,15 +2,19 @@ mod registry_helpers;
 mod hk4e_helpers;
 
 use std::collections::HashMap;
+use std::ffi::CString;
 use std::io::{ErrorKind};
 use std::path::Path;
 use clap::{Parser, Subcommand};
 use configparser::ini::Ini;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
+use windows::core::PCSTR;
+use windows::Win32::Foundation::HWND;
+use windows::Win32::UI::WindowsAndMessaging::{MessageBoxA, MB_OK};
 use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_SET_VALUE};
 use winreg::RegKey;
-use crate::registry_helpers::{create_raw_value_from_json, parse_raw_value};
+use crate::registry_helpers::{create_raw_value_from_json, find_matching_value, parse_raw_value};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct MenuDataDict {
@@ -91,7 +95,9 @@ fn main() -> std::io::Result<()> {
                                 if r.is_ok() { println!("Honkai: StarRail FPS unlocked to {:?}", pretty_settings["FPS"].as_u64().unwrap()); } else { eprintln!("Failed to unlock Honkai: StarRail FPS!"); }
                             }
                         } else {
-                            // TODO: Write the empty key following default values except modified fps
+                            let text = CString::new("No GraphicsSettings key found in the registry! Please make sure you are using custom preset for graphics settings.\nGame will start without unlocked fps.")?;
+                            let caption = CString::new("KeqingUnlock notice")?;
+                            unsafe { MessageBoxA(HWND(0), PCSTR(text.as_ptr() as *const u8), PCSTR(caption.as_ptr() as *const u8), MB_OK); }
                             eprintln!("No settings found!");
                         }
                     };
@@ -125,15 +131,16 @@ fn main() -> std::io::Result<()> {
                             if fps2.is_none() || fps1.is_none() {
                                 eprintln!("No TargetFrameRateForInLevel or TargetFrameRateForOthers key found!");
                             } else {
-                                // Fallback to 60
                                 if target_fps >= 300 { pretty_settings["TargetFrameRateForInLevel"] = serde_json::Value::Number(serde_json::Number::from(60)); } else { pretty_settings["TargetFrameRateForInLevel"] = serde_json::Value::Number(serde_json::Number::from(target_fps)); }
-                                if target_fps >= 300 { pretty_settings["TargetFrameRateForOthers"] = serde_json::Value::Number(serde_json::Number::from(600)); } else { pretty_settings["TargetFrameRateForOthers"] = serde_json::Value::Number(serde_json::Number::from(target_fps)); }
+                                if target_fps >= 300 { pretty_settings["TargetFrameRateForOthers"] = serde_json::Value::Number(serde_json::Number::from(60)); } else { pretty_settings["TargetFrameRateForOthers"] = serde_json::Value::Number(serde_json::Number::from(target_fps)); }
                                 let updated = create_raw_value_from_json(&pretty_settings, &graphics_settings)?;
                                 let r = hivew.unwrap().set_raw_value(v.clone(), &updated);
                                 if r.is_ok() { println!("HonkaiImpact 3rd FPS unlocked to {:?}", pretty_settings["TargetFrameRateForInLevel"].as_u64().unwrap()); } else { eprintln!("Failed to unlock HonkaiImpact 3rd FPS!"); }
                             }
                         } else {
-                            // TODO: Write the empty key following default values except modified fps
+                            let text = CString::new("No PersonalGraphicsSettingV2 key found in the registry! Please make sure you are using custom preset for graphics settings.\nGame will start without unlocked fps.")?;
+                            let caption = CString::new("KeqingUnlock notice")?;
+                            unsafe { MessageBoxA(HWND(0), PCSTR(text.as_ptr() as *const u8), PCSTR(caption.as_ptr() as *const u8), MB_OK); }
                             eprintln!("No settings found!");
                         }
                     };
@@ -220,7 +227,12 @@ fn main() -> std::io::Result<()> {
                     ini.load(gameusersettings.as_path().to_str().unwrap()).unwrap();
                     ini.set("/Script/Engine.GameUserSettings", "FramePace", Some(fpsv.to_string())).unwrap();
                     let r = ini.write(gameusersettings.as_path().to_str().unwrap());
-                    if r.is_ok() { println!("WutheringWaves FPS unlocked to {}", fpsv.to_string()); } else { eprintln!("Failed to unlock WutheringWaves FPS!"); }
+                    if r.is_ok() { println!("WutheringWaves FPS unlocked to {}", fpsv.to_string()); } else {
+                        let text = CString::new("Failed to unlock WutheringWaves FPS!\nGame will start without unlocked fps.")?;
+                        let caption = CString::new("KeqingUnlock notice")?;
+                        unsafe { MessageBoxA(HWND(0), PCSTR(text.as_ptr() as *const u8), PCSTR(caption.as_ptr() as *const u8), MB_OK); }
+                        eprintln!("Failed to unlock WutheringWaves FPS!");
+                    }
                 },
                 // pgr_global does not need a case as game is too obscure to find anything about unlocking its FPS beyond 120
                 &_ => { eprintln!("GameID not recognized! Use --help for help."); }
@@ -229,28 +241,4 @@ fn main() -> std::io::Result<()> {
         _ => { eprintln!("No subcommand specified! Use --help for help."); }
     }
     Ok(())
-}
-
-fn find_matching_value(available_values: &[String], pattern: &str) -> Option<String> {
-    for value in available_values {
-        let value_lower = value.to_lowercase();
-        let pattern_lower = pattern.to_lowercase();
-        if matches_pattern(&value_lower, &pattern_lower) { return Some(value.clone()); }
-    }
-    None
-}
-
-fn matches_pattern(value: &str, pattern: &str) -> bool {
-    if value == pattern { return true; }
-    if value.starts_with(pattern) { return true; }
-    if let Some(base_pattern) = pattern.strip_suffix("_h") {
-        if let Some(pattern_index) = value.find(base_pattern) {
-            let after_pattern = &value[pattern_index + base_pattern.len()..];
-            if let Some(after_h) = after_pattern.strip_prefix("_h") {
-                if after_h.chars().all(|c| c.is_ascii_digit()) { return true; }
-            }
-        }
-    }
-    if value.contains(pattern) && pattern.len() > 5 { return true; }
-    false
 }

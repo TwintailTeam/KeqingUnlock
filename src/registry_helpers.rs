@@ -1,6 +1,30 @@
 use serde_json::Value;
 use winreg::RegValue;
 
+pub fn find_matching_value(available_values: &[String], pattern: &str) -> Option<String> {
+    for value in available_values {
+        let value_lower = value.to_lowercase();
+        let pattern_lower = pattern.to_lowercase();
+        if matches_pattern(&value_lower, &pattern_lower) { return Some(value.clone()); }
+    }
+    None
+}
+
+pub fn matches_pattern(value: &str, pattern: &str) -> bool {
+    if value == pattern { return true; }
+    if value.starts_with(pattern) { return true; }
+    if let Some(base_pattern) = pattern.strip_suffix("_h") {
+        if let Some(pattern_index) = value.find(base_pattern) {
+            let after_pattern = &value[pattern_index + base_pattern.len()..];
+            if let Some(after_h) = after_pattern.strip_prefix("_h") {
+                if after_h.chars().all(|c| c.is_ascii_digit()) { return true; }
+            }
+        }
+    }
+    if value.contains(pattern) && pattern.len() > 5 { return true; }
+    false
+}
+
 pub fn parse_raw_value(raw_value: &RegValue) -> std::io::Result<Value> {
     match serde_json::from_slice(&raw_value.bytes) {
         Ok(value) => Ok(value),
