@@ -30,7 +30,7 @@ features = [
 [profile.release]
 debug-assertions = false
 debug = false
-opt-level = 3
+opt-level = "s"
 strip = true
 lto = true
 codegen-units = 16

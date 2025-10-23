@@ -1,3 +1,4 @@
+#![windows_subsystem = "windows"]
 mod registry_helpers;
 mod hk4e_helpers;
 
@@ -10,10 +11,12 @@ use configparser::ini::Ini;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use windows::core::PCSTR;
-use windows::Win32::Foundation::HWND;
+use windows::Win32::Foundation::{HWND, INVALID_HANDLE_VALUE};
+use windows::Win32::System::Diagnostics::Debug::WriteProcessMemory;
 use windows::Win32::UI::WindowsAndMessaging::{MessageBoxA, MB_OK};
 use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_SET_VALUE};
 use winreg::RegKey;
+use crate::hk4e_helpers::{find_fps_var, wait_for_handle};
 use crate::registry_helpers::{create_raw_value_from_json, find_matching_value, parse_raw_value};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -57,11 +60,28 @@ fn main() -> std::io::Result<()> {
         Some(Commands::Run { game_id, target_fps, refresh_delay, game_path }) => {
             match game_id.as_str() {
                 "hk4e_global" => unsafe {
-                    /*let target = "GenshinImpact.exe";
-                    let r = wait_for_handle_by_name(target);
-                    let pid = get_pid_from_handle(r);
-                    let (base, _size) = get_module_base(pid, target).unwrap();*/
-                    println!("Genshin support Soon");
+                    let target = "GenshinImpact.exe";
+                    let r = wait_for_handle(target);
+                    if r == INVALID_HANDLE_VALUE {
+                        let text = CString::new("No game process found.\nGame will start without unlocked fps.")?;
+                        let caption = CString::new("KeqingUnlock notice")?;
+                        MessageBoxA(HWND(0), PCSTR(text.as_ptr() as *const u8), PCSTR(caption.as_ptr() as *const u8), MB_OK);
+                        eprintln!("Game process not found!");
+                    }
+
+                    let fpsv = find_fps_var(r);
+                    let tfps = if target_fps >= 300 { 60 } else { target_fps };
+
+                    let write_ok = WriteProcessMemory(r, fpsv as *mut _, &tfps as *const _ as *const _, size_of::<u32>(), std::ptr::null_mut()).as_bool();
+                    if !write_ok {
+                        let text = CString::new("Failed to write FPS.\nGame will start without unlocked fps.")?;
+                        let caption = CString::new("KeqingUnlock notice")?;
+                        MessageBoxA(HWND(0), PCSTR(text.as_ptr() as *const u8), PCSTR(caption.as_ptr() as *const u8), MB_OK);
+                        eprintln!("Failed to write FPS");
+                    }
+                    if refresh_delay > 0 {
+                        while WriteProcessMemory(r, fpsv as *mut _, &target_fps as *const _ as *const _, size_of::<u32>(), std::ptr::null_mut()).as_bool() { std::thread::sleep(std::time::Duration::from_millis(refresh_delay)); }
+                    }
                 }
                 "hkrpg_global" => {
                     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
