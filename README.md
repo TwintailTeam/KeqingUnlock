@@ -15,7 +15,7 @@ keqing_unlock.exe games
 3. To run the unlocker
 
 ```shell
-keqing_unlock.exe run <game_id> <target_fps> <refresh delay> <game_path>
+keqing_unlock.exe run <game_id> <target_fps> <refresh delay> <init_delay> <game_path>
 ```
 
 

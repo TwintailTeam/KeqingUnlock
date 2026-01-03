@@ -35,6 +35,7 @@ enum Commands {
         game_id: String,
         target_fps: u32,
         refresh_delay: u64,
+        init_delay: u64,
         game_path: String
     }
 }
@@ -57,7 +58,7 @@ fn main() -> std::io::Result<()> {
  - WutheringWaves = wuwa_global
             "#);
         }
-        Some(Commands::Run { game_id, target_fps, refresh_delay, game_path }) => {
+        Some(Commands::Run { game_id, target_fps, refresh_delay, init_delay, game_path }) => {
             match game_id.as_str() {
                 "hk4e_global" => unsafe {
                     let target = "GenshinImpact.exe";
@@ -69,8 +70,9 @@ fn main() -> std::io::Result<()> {
                         eprintln!("Game process not found!");
                     }
 
+                    if init_delay > 0 { std::thread::sleep(std::time::Duration::from_millis(init_delay)); }
                     let fpsv = find_fps_var(r);
-                    let tfps = if target_fps >= 300 { 60 } else { target_fps };
+                    let tfps = if target_fps >= 500 { 60 } else { target_fps };
 
                     let write_ok = WriteProcessMemory(r, fpsv as *mut _, &tfps as *const _ as *const _, size_of::<u32>(), std::ptr::null_mut()).as_bool();
                     if !write_ok {
@@ -151,8 +153,8 @@ fn main() -> std::io::Result<()> {
                             if fps2.is_none() || fps1.is_none() {
                                 eprintln!("No TargetFrameRateForInLevel or TargetFrameRateForOthers key found!");
                             } else {
-                                if target_fps >= 300 { pretty_settings["TargetFrameRateForInLevel"] = serde_json::Value::Number(serde_json::Number::from(60)); } else { pretty_settings["TargetFrameRateForInLevel"] = serde_json::Value::Number(serde_json::Number::from(target_fps)); }
-                                if target_fps >= 300 { pretty_settings["TargetFrameRateForOthers"] = serde_json::Value::Number(serde_json::Number::from(60)); } else { pretty_settings["TargetFrameRateForOthers"] = serde_json::Value::Number(serde_json::Number::from(target_fps)); }
+                                if target_fps >= 500 { pretty_settings["TargetFrameRateForInLevel"] = serde_json::Value::Number(serde_json::Number::from(60)); } else { pretty_settings["TargetFrameRateForInLevel"] = serde_json::Value::Number(serde_json::Number::from(target_fps)); }
+                                if target_fps >= 500 { pretty_settings["TargetFrameRateForOthers"] = serde_json::Value::Number(serde_json::Number::from(60)); } else { pretty_settings["TargetFrameRateForOthers"] = serde_json::Value::Number(serde_json::Number::from(target_fps)); }
                                 let updated = create_raw_value_from_json(&pretty_settings, &graphics_settings)?;
                                 let r = hivew.unwrap().set_raw_value(v.clone(), &updated);
                                 if r.is_ok() { println!("HonkaiImpact 3rd FPS unlocked to {:?}", pretty_settings["TargetFrameRateForInLevel"].as_u64().unwrap()); } else { eprintln!("Failed to unlock HonkaiImpact 3rd FPS!"); }
