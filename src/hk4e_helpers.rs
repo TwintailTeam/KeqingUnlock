@@ -3,40 +3,52 @@ use std::os::windows::ffi::OsStringExt;
 use std::time::Duration;
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::System::Diagnostics::Debug::{ReadProcessMemory, IMAGE_NT_HEADERS64, IMAGE_SCN_MEM_EXECUTE, IMAGE_SECTION_CHARACTERISTICS, IMAGE_SECTION_HEADER};
-use windows::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS};
+use windows::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, Module32FirstW, Module32NextW, Process32FirstW, Process32NextW, MODULEENTRY32W, PROCESSENTRY32W, TH32CS_SNAPMODULE, TH32CS_SNAPPROCESS};
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_ALL_ACCESS};
 
-// Credit to certain person for writing this I just ported it to rust kek to fit my needs
-
-pub fn wait_for_handle(target: &str) -> HANDLE {
+pub fn wait_for_handle(target: &str) -> (HANDLE, *const c_void) {
     loop {
         unsafe {
-            let snapshot = match CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) {
-                Ok(h) => h,
-                Err(_) => { std::thread::sleep(Duration::from_millis(100)); continue; }
-            };
-            let mut entry = PROCESSENTRY32W {
-                dwSize: size_of::<PROCESSENTRY32W>() as u32,
-                ..Default::default()
-            };
-            if !Process32FirstW(snapshot, &mut entry).as_bool() {
-                CloseHandle(snapshot).unwrap();
+            let snap = match CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) { Ok(h) => h, Err(_) => { std::thread::sleep(Duration::from_millis(100)); continue; } };
+            let mut pe = PROCESSENTRY32W { dwSize: size_of::<PROCESSENTRY32W>() as u32, ..Default::default() };
+            if !Process32FirstW(snap, &mut pe).as_bool() {
+                CloseHandle(snap).unwrap();
                 std::thread::sleep(Duration::from_millis(100));
                 continue;
             }
-            let handle = loop {
-                let len = entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(entry.szExeFile.len());
-                let exe_name = OsString::from_wide(&entry.szExeFile[..len]).to_string_lossy().to_string();
-                if exe_name.eq_ignore_ascii_case(target) {
-                    let proc_handle = OpenProcess(PROCESS_ALL_ACCESS, false, entry.th32ProcessID);
-                    break proc_handle;
-                }
-                if !Process32NextW(snapshot, &mut entry).as_bool() { break Ok(HANDLE::default()); }
+            let found = loop {
+                let len = pe.szExeFile.iter().position(|&c| c == 0).unwrap_or(pe.szExeFile.len());
+                let name = OsString::from_wide(&pe.szExeFile[..len]).to_string_lossy().to_string();
+                if name.eq_ignore_ascii_case(target) { break Some(pe.th32ProcessID); }
+                if !Process32NextW(snap, &mut pe).as_bool() { break None; }
             };
-            CloseHandle(snapshot).unwrap();
-            let handle = handle.unwrap();
-            if !handle.is_invalid() { return handle; }
-            std::thread::sleep(Duration::from_millis(100));
+            CloseHandle(snap).unwrap();
+
+            let pid = match found { Some(p) => p, None => { std::thread::sleep(Duration::from_millis(100)); continue; } };
+            let handle = match OpenProcess(PROCESS_ALL_ACCESS, false, pid) { Ok(h) if !h.is_invalid() => h, _ => { std::thread::sleep(Duration::from_millis(100)); continue; } };
+
+            // grab module base from the same process while we have the pid
+            let base = match CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, pid) {
+                Err(_) => { CloseHandle(handle).unwrap(); std::thread::sleep(Duration::from_millis(100)); continue; }
+                Ok(msnap) => {
+                    let mut me = MODULEENTRY32W { dwSize: size_of::<MODULEENTRY32W>() as u32, ..Default::default() };
+                    let mut found_base = std::ptr::null();
+                    if Module32FirstW(msnap, &mut me).as_bool() {
+                        loop {
+                            let len = me.szModule.iter().position(|&c| c == 0).unwrap_or(me.szModule.len());
+                            let mname = OsString::from_wide(&me.szModule[..len]).to_string_lossy().to_string();
+                            if mname.eq_ignore_ascii_case(target) { found_base = me.modBaseAddr as *const c_void; break; }
+                            if !Module32NextW(msnap, &mut me).as_bool() { break; }
+                        }
+                    }
+                    CloseHandle(msnap).unwrap();
+                    found_base
+                }
+            };
+
+            if base.is_null() { CloseHandle(handle).unwrap(); std::thread::sleep(Duration::from_millis(100)); continue; }
+            eprintln!("{} module base: {:p}", target, base);
+            return (handle, base);
         }
     }
 }
@@ -70,7 +82,10 @@ pub unsafe fn find_pattern_ex(process: HANDLE, address: *const u8, limit: usize,
         left -= count - length;
         let mut bytes_read: usize = 0;
         let read_ok = ReadProcessMemory(process, current as *const c_void, buf.as_mut_ptr() as *mut c_void, count, &mut bytes_read, ).as_bool();
-        if !read_ok || bytes_read == 0 { return std::ptr::null(); }
+        if !read_ok || bytes_read == 0 {
+            current = current.add(count - length);
+            continue;
+        }
 
         let pattern_pos = find_pattern(buf.as_ptr(), bytes_read, pattern, length);
         if !pattern_pos.is_null() { return current.add(pattern_pos.offset_from(buf.as_ptr()) as usize); }
@@ -89,9 +104,7 @@ unsafe fn find_pattern_ex_in_module(process: HANDLE, module: *const c_void, filt
     if !try_read_memory(process, module, &mut header) { return std::ptr::null(); }
 
     let dos_header = &*(header.as_ptr() as *const IMAGE_DOS_HEADER);
-    if dos_header.e_magic != 0x5A4D { // 'MZ'
-        return std::ptr::null();
-    }
+    if dos_header.e_magic != 0x5A4D { return std::ptr::null(); }
 
     let nt_headers = &*((header.as_ptr().add(dos_header.e_lfanew as usize)) as *const IMAGE_NT_HEADERS64);
     let section_headers = (nt_headers as *const IMAGE_NT_HEADERS64).add(1) as *const IMAGE_SECTION_HEADER;
@@ -101,15 +114,16 @@ unsafe fn find_pattern_ex_in_module(process: HANDLE, module: *const c_void, filt
         let section = &*section_headers.add(i);
         if (section.Characteristics & filter) != filter { continue; }
         let section_addr = (module as *const u8).add(section.VirtualAddress as usize);
-        let pos = find_pattern_ex(process, section_addr, section.SizeOfRawData as usize, pattern, length);
+        let scan_size = section.Misc.VirtualSize.max(section.SizeOfRawData) as usize;
+        let pos = find_pattern_ex(process, section_addr, scan_size, pattern, length);
         if !pos.is_null() { return pos; }
     }
     std::ptr::null()
 }
 
-// TODO: Make it compatible with shitdows too, will only works under wine
-pub unsafe fn find_fps_var(process: HANDLE) -> *mut u32 {
-    let executable = 0x140000000 as *mut c_void;
+// Works under Wine/Proton; Windows support is WIP
+pub unsafe fn find_fps_var(process: HANDLE, module_base: *const c_void) -> *mut u32 {
+    let executable = module_base;
 
     let setter_call_pattern: [i16; 11] = [
         0xB9, 0x3C, 0x00, 0x00, 0x00, // B9 3C000000 mov ecx, 60
@@ -118,22 +132,29 @@ pub unsafe fn find_fps_var(process: HANDLE) -> *mut u32 {
     ];
 
     let setter_call = find_pattern_ex_in_module(process, executable, IMAGE_SCN_MEM_EXECUTE, setter_call_pattern.as_ptr(), setter_call_pattern.len());
-    if setter_call.is_null() { eprintln!("Could not find setter call"); }
+    if setter_call.is_null() {
+        eprintln!("Could not find setter call pattern");
+        return std::ptr::null_mut();
+    }
+
     let mut bytes_at_addr = [0u8; 6];
     let mut potential_mov = setter_call.add(5);
 
-    loop {
+    for _ in 0..32 {
         let mut bytes_read: usize = 0;
         let read_ok = ReadProcessMemory(process, potential_mov as *const c_void, bytes_at_addr.as_mut_ptr() as *mut c_void, bytes_at_addr.len(), &mut bytes_read).as_bool();
         if !read_ok || bytes_read != bytes_at_addr.len() { return std::ptr::null_mut(); }
 
         if bytes_at_addr[0] == 0xE9 || bytes_at_addr[0] == 0xE8 {
             let rel = i32::from_le_bytes(bytes_at_addr[1..5].try_into().unwrap());
-            potential_mov = potential_mov.add((rel + 5) as usize);
+            potential_mov = potential_mov.add((rel as isize + 5) as usize);
         } else { break; }
     }
-    // 890D ???????? mov [fps], ecx
-    if bytes_at_addr[0] != 0x89 || bytes_at_addr[1] != 0x0D { eprintln!("Could not find 'mov [fps], ecx'"); }
+
+    if bytes_at_addr[0] != 0x89 || bytes_at_addr[1] != 0x0D {
+        eprintln!("Could not find 'mov [fps], ecx' (got {:02X} {:02X})", bytes_at_addr[0], bytes_at_addr[1]);
+        return std::ptr::null_mut();
+    }
     let fps_offset = i32::from_le_bytes(bytes_at_addr[2..6].try_into().unwrap());
     (potential_mov.add(6).offset(fps_offset as isize)) as *mut u32
 }

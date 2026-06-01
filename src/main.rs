@@ -11,7 +11,7 @@ use configparser::ini::Ini;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use windows::core::PCSTR;
-use windows::Win32::Foundation::{HWND, INVALID_HANDLE_VALUE};
+use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Diagnostics::Debug::WriteProcessMemory;
 use windows::Win32::UI::WindowsAndMessaging::{MessageBoxA, MB_OK};
 use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_SET_VALUE};
@@ -62,16 +62,16 @@ fn main() -> std::io::Result<()> {
             match game_id.as_str() {
                 "hk4e_global" => unsafe {
                     let target = "GenshinImpact.exe";
-                    let r = wait_for_handle(target);
-                    if r == INVALID_HANDLE_VALUE {
-                        let text = CString::new("No game process found.\nGame will start without unlocked fps.")?;
+                    let (r, module_base) = wait_for_handle(target);
+                    if init_delay > 0 { std::thread::sleep(std::time::Duration::from_millis(init_delay)); }
+                    let fpsv = find_fps_var(r, module_base);
+                    if fpsv.is_null() {
+                        let text = CString::new("Failed to locate FPS variable in game memory.\nGame will start without unlocked fps.")?;
                         let caption = CString::new("KeqingUnlock notice")?;
                         MessageBoxA(HWND(0), PCSTR(text.as_ptr() as *const u8), PCSTR(caption.as_ptr() as *const u8), MB_OK);
-                        eprintln!("Game process not found!");
+                        eprintln!("Failed to locate FPS variable");
+                        return Ok(());
                     }
-
-                    if init_delay > 0 { std::thread::sleep(std::time::Duration::from_millis(init_delay)); }
-                    let fpsv = find_fps_var(r);
                     let tfps = if target_fps >= 500 { 60 } else { target_fps };
 
                     let write_ok = WriteProcessMemory(r, fpsv as *mut _, &tfps as *const _ as *const _, size_of::<u32>(), std::ptr::null_mut()).as_bool();
